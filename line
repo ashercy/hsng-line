@@ -1,0 +1,410 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Bot.Builder;
+using Microsoft.Bot.Schema;
+using Microsoft.Bot.Builder.Integration.AspNet.Core;
+using System;
+using System.Text;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
+
+namespace Microsoft.BotBuilderSamples.Bots
+{
+    public class EchoBot : ActivityHandler
+    {
+        protected override async Task OnMessageActivityAsync(ITurnContext<IMessageActivity> turnContext, CancellationToken cancellationToken)
+        {
+            var userId = turnContext.Activity.From.Id;
+            var line_accessToken = "tL1RR0d2Em9VU5rGcT+Z8pu1D2hunYU8YH7JFfFfoiJ2XJ+wk/s6kUwddmcXoPYsfblJcaBc/+yVRBXKpzDssedluKdEjPfL+1pr5j+cIOudFj2ajnifSN7tYmkK55PFR8UJfKnoEblrRyM2emOdrgdB04t89/1O/w1cDnyilFU=";
+            //var replyText = $"hsng2: {turnContext.Activity.Text}";
+            //await turnContext.SendActivityAsync(MessageFactory.Text(replyText, replyText), cancellationToken);
+            //設定device 參數
+            string hubName = "IoTHub-AC-Demo";
+            string signingKey = "b2+95ZxZ3GE2r6MDMFwewcq/g65pTN0uqhKyN4y6WgM=";
+            int expiresInMins = 3000;
+            string policyName = "iothubowner";
+            //var deviceName = "AC_1";
+            if (turnContext.Activity.Text == "control menu")
+            {
+                //設定個別用戶選單
+                //setup reusable http client
+                HttpClient client = new HttpClient();
+                // 指定 authorization header
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", line_accessToken);
+                // 發出 post 並取得結果
+                var uri = "https://api.line.me/v2/bot/user/" + userId + "/richmenu/richmenu-0604e0dc08525abff9ed503088faf1b1";
+                HttpResponseMessage response = client.PostAsync(uri, null).Result;
+                //印出回應
+                //var tmp = response.Content.ReadAsStringAsync().Result;
+                //await turnContext.SendActivityAsync(MessageFactory.Text(tmp , tmp), cancellationToken);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(userId , userId), cancellationToken);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(uri , uri), cancellationToken);
+                
+            }
+            if (turnContext.Activity.Text == "temp up")
+            {
+                //get twin
+                string deviceId = "AC_1";
+                //See this doc for details: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-devguide-security
+                //https://blog.jongallant.com/2017/02/azure-iot-hub-device-twin-rest-apis-postman-newman/
+                var resourceUri = hubName + ".azure-devices.net"; // The resource uri
+                var IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                //送出HTTP requert
+                HttpClient client = new HttpClient();//setup reusable http client 
+                client.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                var uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";//設定uri
+                HttpResponseMessage response = client.GetAsync(uri).Result;// 發出 http 並取得結果
+                //印出回應
+                var twin_string = response.Content.ReadAsStringAsync().Result;
+                Root info = JsonConvert.DeserializeObject<Root>(twin_string);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(Convert.ToString(info.properties.desired.AC_temp) , Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                if (info.properties.desired.AC_temp >= 30)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text("Max setting temperature is 30 degree!" , Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                }
+                else 
+                {
+                    //patch twin
+                    IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                     //送出HTTP requert
+                    HttpClient client1 = new HttpClient();//setup reusable http client 
+                    client1.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                    uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";// 設定uri
+                    HttpContent httpContent = new StringContent("{\"deviceId\":\"" + deviceId + "\",\"properties\":{\"desired\":{\"AC_temp\":" + Convert.ToString(info.properties.desired.AC_temp + 1) + "}}}"
+                                                                  , Encoding.UTF8, "application/json");//寫入body
+                    HttpResponseMessage response1 = client1.PatchAsync(uri,httpContent).Result;// 發出 http 並取得結果
+                    //印出回應
+                    var patch_string = response1.Content.ReadAsStringAsync().Result;
+                    info = JsonConvert.DeserializeObject<Root>(patch_string);
+                    await turnContext.SendActivityAsync(MessageFactory.Text("目前右邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp) , "目前右邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                    //換deviceId
+                    deviceId = "AC_2";
+                    uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";// 設定uri
+                    HttpContent httpContent1 = new StringContent("{\"deviceId\":\"" + deviceId + "\",\"properties\":{\"desired\":{\"AC_temp\":" + Convert.ToString(info.properties.desired.AC_temp) + "}}}"
+                                                                  , Encoding.UTF8, "application/json");//寫入body
+                    HttpResponseMessage response2 = client1.PatchAsync(uri,httpContent1).Result;// 發出 http 並取得結果
+                    //印出回應
+                    patch_string = response2.Content.ReadAsStringAsync().Result;
+                    info = JsonConvert.DeserializeObject<Root>(patch_string);
+                    await turnContext.SendActivityAsync(MessageFactory.Text("目前左邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp) , "目前左邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                }
+            }
+            if (turnContext.Activity.Text == "temp down")
+            {
+                //get twin
+                string deviceId = "AC_1";
+                //See this doc for details: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-devguide-security
+                //https://blog.jongallant.com/2017/02/azure-iot-hub-device-twin-rest-apis-postman-newman/
+                var resourceUri = hubName + ".azure-devices.net"; // The resource uri
+                var IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                //送出HTTP requert
+                HttpClient client = new HttpClient();//setup reusable http client 
+                client.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                var uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";//設定uri
+                HttpResponseMessage response = client.GetAsync(uri).Result;// 發出 http 並取得結果
+                //印出回應
+                var twin_string = response.Content.ReadAsStringAsync().Result;
+                Root info = JsonConvert.DeserializeObject<Root>(twin_string);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(Convert.ToString(info.properties.desired.AC_temp) , Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                if (info.properties.desired.AC_temp <= 25)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text("Min setting temperature is 25 degree!" , Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                }
+                else 
+                {
+                    //patch twin
+                    IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                     //送出HTTP requert
+                    HttpClient client1 = new HttpClient();//setup reusable http client 
+                    client1.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                    uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";// 設定uri
+                    HttpContent httpContent = new StringContent("{\"deviceId\":\"" + deviceId + "\",\"properties\":{\"desired\":{\"AC_temp\":" + Convert.ToString(info.properties.desired.AC_temp - 1) + "}}}"
+                                                                  , Encoding.UTF8, "application/json");//寫入body
+                    HttpResponseMessage response2 = client1.PatchAsync(uri,httpContent).Result;// 發出 http 並取得結果
+                    //印出回應
+                    var patch_string = response2.Content.ReadAsStringAsync().Result;
+                    info = JsonConvert.DeserializeObject<Root>(patch_string);
+                    await turnContext.SendActivityAsync(MessageFactory.Text("目前右邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp) , "目前右邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                    //換deviceId
+                    deviceId = "AC_2";
+                    uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";// 設定uri
+                    HttpContent httpContent1 = new StringContent("{\"deviceId\":\"" + deviceId + "\",\"properties\":{\"desired\":{\"AC_temp\":" + Convert.ToString(info.properties.desired.AC_temp) + "}}}"
+                                                                  , Encoding.UTF8, "application/json");//寫入body
+                    HttpResponseMessage response1 = client1.PatchAsync(uri,httpContent1).Result;// 發出 http 並取得結果
+                    //印出回應
+                    patch_string = response1.Content.ReadAsStringAsync().Result;
+                    info = JsonConvert.DeserializeObject<Root>(patch_string);
+                    await turnContext.SendActivityAsync(MessageFactory.Text("目前左邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp) , "目前左邊冷氣溫度:" + Convert.ToString(info.properties.desired.AC_temp)), cancellationToken);
+                }
+            }
+            if (turnContext.Activity.Text == "current info")
+            {
+                //get twin
+                string deviceId = "AC_1";
+                //See this doc for details: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-devguide-security
+                //https://blog.jongallant.com/2017/02/azure-iot-hub-device-twin-rest-apis-postman-newman/
+                var resourceUri = hubName + ".azure-devices.net"; // The resource uri
+                var IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                //送出HTTP requert
+                HttpClient client = new HttpClient();//setup reusable http client 
+                client.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                var uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";//設定uri
+                HttpResponseMessage response = client.GetAsync(uri).Result;// 發出 http 並取得結果
+                //印出回應
+                var twin_string = response.Content.ReadAsStringAsync().Result;
+                Root info = JsonConvert.DeserializeObject<Root>(twin_string);
+                string output = "右邊冷氣溫度 = " + Convert.ToString(info.properties.desired.AC_temp)  ;   
+                await turnContext.SendActivityAsync(MessageFactory.Text(output,output), cancellationToken);                                                    
+                output = info.properties.desired.AC_active == 1? "右邊冷氣狀態 = 開機,\r\n":"右邊冷氣狀態 = 關機";
+                await turnContext.SendActivityAsync(MessageFactory.Text(output,output), cancellationToken);
+                //get twin
+                deviceId = "AC_2";
+                //送出HTTP requert
+                HttpClient client1 = new HttpClient();//setup reusable http client 
+                client1.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";//設定uri
+                response = client.GetAsync(uri).Result;// 發出 http 並取得結果
+                //印出回應
+                twin_string = response.Content.ReadAsStringAsync().Result;
+                info = JsonConvert.DeserializeObject<Root>(twin_string);
+                output = "左邊冷氣溫度 = " + Convert.ToString(info.properties.desired.AC_temp)  ;
+                await turnContext.SendActivityAsync(MessageFactory.Text(output,output), cancellationToken);
+                output = info.properties.desired.AC_active == 1? "左邊冷氣狀態 = 開機":"左邊冷氣狀態 = 關機";
+                await turnContext.SendActivityAsync(MessageFactory.Text(output,output), cancellationToken);
+            }
+            if (turnContext.Activity.Text == "main menu")
+            {
+               //設定個別用戶選單
+                //setup reusable http client
+                HttpClient client = new HttpClient();
+                // 指定 authorization header
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", line_accessToken);
+                // 發出 HTTP 並取得結果
+                var uri = "https://api.line.me/v2/bot/user/" + userId + "/richmenu";
+                HttpResponseMessage response = client.DeleteAsync(uri).Result;
+                //印出回應
+                //var tmp = response.Content.ReadAsStringAsync().Result;
+                //await turnContext.SendActivityAsync(MessageFactory.Text(tmp , tmp), cancellationToken);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(userId , userId), cancellationToken);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(uri , uri), cancellationToken);
+            }
+            if (turnContext.Activity.Text == "left AC ON/OFF")
+            {
+                //get twin
+                string deviceId = "AC_2";
+                //See this doc for details: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-devguide-security
+                //https://blog.jongallant.com/2017/02/azure-iot-hub-device-twin-rest-apis-postman-newman/
+                var resourceUri = hubName + ".azure-devices.net"; // The resource uri
+                var IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                //送出HTTP requert
+                HttpClient client = new HttpClient();//setup reusable http client 
+                client.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                var uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";//設定uri
+                HttpResponseMessage response = client.GetAsync(uri).Result;// 發出 http 並取得結果
+                //印出回應
+                var twin_string = response.Content.ReadAsStringAsync().Result;
+                Root info = JsonConvert.DeserializeObject<Root>(twin_string);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(Convert.ToString(info.properties.desired.AC_active) , Convert.ToString(info.properties.desired.AC_active)), cancellationToken);
+                //change AC on to off/off to on
+                string tmp = Convert.ToString(info.properties.desired.AC_active == 1? 0:1);
+                //patch twin
+                IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                 //送出HTTP requert
+                HttpClient client1 = new HttpClient();//setup reusable http client 
+                client1.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";// 設定uri
+                HttpContent httpContent = new StringContent("{\"deviceId\":\"" + deviceId + "\",\"properties\":{\"desired\":{\"AC_active\":" + tmp + "}}}" , Encoding.UTF8, "application/json");//寫入body
+                HttpResponseMessage response1 = client1.PatchAsync(uri,httpContent).Result;// 發出 http 並取得結果
+                //印出回應
+                var patch_string = response1.Content.ReadAsStringAsync().Result;
+                info = JsonConvert.DeserializeObject<Root>(patch_string);
+                var output = info.properties.desired.AC_active == 1? "左邊冷氣開機":"左邊冷氣關機";
+                await turnContext.SendActivityAsync(MessageFactory.Text(output , output), cancellationToken);
+                
+            }
+            if (turnContext.Activity.Text == "right AC ON/OFF")
+            {
+                //get twin
+                string deviceId = "AC_1";
+                //See this doc for details: https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-devguide-security
+                //https://blog.jongallant.com/2017/02/azure-iot-hub-device-twin-rest-apis-postman-newman/
+                var resourceUri = hubName + ".azure-devices.net"; // The resource uri
+                var IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                //送出HTTP requert
+                HttpClient client = new HttpClient();//setup reusable http client 
+                client.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                var uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";//設定uri
+                HttpResponseMessage response = client.GetAsync(uri).Result;// 發出 http 並取得結果
+                //印出回應
+                var twin_string = response.Content.ReadAsStringAsync().Result;
+                Root info = JsonConvert.DeserializeObject<Root>(twin_string);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(Convert.ToString(info.properties.desired.AC_active) , Convert.ToString(info.properties.desired.AC_active)), cancellationToken);
+                //change AC on to off/off to on
+                string tmp = Convert.ToString(info.properties.desired.AC_active == 1? 0:1);
+                //patch twin
+                IoTHubtoken = generateSasToken(resourceUri,signingKey, policyName,expiresInMins);//set token
+                 //送出HTTP requert
+                HttpClient client1 = new HttpClient();//setup reusable http client 
+                client1.DefaultRequestHeaders.Add("Authorization", IoTHubtoken);// 指定 authorization header
+                uri = "https://" + hubName + ".azure-devices.net/twins/" + deviceId + "?api-version=2020-05-31-preview";// 設定uri
+                HttpContent httpContent = new StringContent("{\"deviceId\":\"" + deviceId + "\",\"properties\":{\"desired\":{\"AC_active\":" + tmp + "}}}" , Encoding.UTF8, "application/json");//寫入body
+                HttpResponseMessage response1 = client1.PatchAsync(uri,httpContent).Result;// 發出 http 並取得結果
+                //印出回應
+                var patch_string = response1.Content.ReadAsStringAsync().Result;
+                info = JsonConvert.DeserializeObject<Root>(patch_string);
+                var output = info.properties.desired.AC_active == 1? "右邊冷氣開機":"右邊冷氣關機";
+                await turnContext.SendActivityAsync(MessageFactory.Text(output , output), cancellationToken);
+                
+            }
+        }
+
+        protected override async Task OnMembersAddedAsync(IList<ChannelAccount> membersAdded, ITurnContext<IConversationUpdateActivity> turnContext, CancellationToken cancellationToken)
+        {
+            var welcomeText = "Welcome to hsng test2!";
+            foreach (var member in membersAdded)
+            {
+                if (member.Id != turnContext.Activity.Recipient.Id)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text(welcomeText, welcomeText), cancellationToken);
+                }
+            }
+        }
+        public static string generateSasToken(string resourceUri, string key, string policyName, int expiryInSeconds = 3600)
+        {
+            TimeSpan fromEpochStart = DateTime.UtcNow - new DateTime(1970, 1, 1);
+            string expiry = Convert.ToString((int)fromEpochStart.TotalSeconds + expiryInSeconds);
+        
+            string stringToSign = WebUtility.UrlEncode(resourceUri) + "\n" + expiry;
+        
+            HMACSHA256 hmac = new HMACSHA256(Convert.FromBase64String(key));
+            string signature = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign)));
+        
+            string token = String.Format(CultureInfo.InvariantCulture, "SharedAccessSignature sr={0}&sig={1}&se={2}", WebUtility.UrlEncode(resourceUri), WebUtility.UrlEncode(signature), expiry);
+        
+            if (!String.IsNullOrEmpty(policyName))
+            {
+                token += "&skn=" + policyName;
+            }
+        
+            return token;
+        }
+        public class bot_info
+        {
+                //  { json example
+                //      "userId": "Ue7d6e1f4ec896b4c5bab0fea7eb34889",
+                //      "basicId": "@504umflk",
+                //      "displayName": "hsng_test2",
+                //      "chatMode": "bot",
+                //      "markAsReadMode": "auto"
+                //  }
+                //bot_info info = JsonConvert.DeserializeObject<bot_info>(tmp);
+                //await turnContext.SendActivityAsync(MessageFactory.Text(info.userId , info.userId), cancellationToken);
+                public string userId { get; set; }
+                public string basicId {get; set; }
+                public string displayName {get; set; }
+                public string chatMode {get; set; }
+                public string markAsReadMode {get; set; }
+        }
+        // Root myDeserializedClass = JsonConvert.DeserializeObject<Root>(myJsonResponse); 
+        public class X509Thumbprint    {
+            public object primaryThumbprint { get; set; } 
+            public object secondaryThumbprint { get; set; } 
+        }
+    
+        public class ACTemp    {
+            [JsonProperty("$lastUpdated")]
+            public DateTime LastUpdated { get; set; } 
+            [JsonProperty("$lastUpdatedVersion")]
+            public int LastUpdatedVersion { get; set; } 
+        }
+    
+        public class ACActive    {
+            [JsonProperty("$lastUpdated")]
+            public DateTime LastUpdated { get; set; } 
+            [JsonProperty("$lastUpdatedVersion")]
+            public int LastUpdatedVersion { get; set; } 
+        }
+    
+        public class ACUp    {
+            [JsonProperty("$lastUpdated")]
+            public DateTime LastUpdated { get; set; } 
+            [JsonProperty("$lastUpdatedVersion")]
+            public int LastUpdatedVersion { get; set; } 
+        }
+    
+        public class ACDown    {
+            [JsonProperty("$lastUpdated")]
+            public DateTime LastUpdated { get; set; } 
+            [JsonProperty("$lastUpdatedVersion")]
+            public int LastUpdatedVersion { get; set; } 
+        }
+    
+        public class Metadata    {
+            [JsonProperty("$lastUpdated")]
+            public DateTime LastUpdated { get; set; } 
+            [JsonProperty("$lastUpdatedVersion")]
+            public int LastUpdatedVersion { get; set; } 
+            public ACTemp AC_temp { get; set; } 
+            public ACActive AC_active { get; set; } 
+            public ACUp AC_up { get; set; } 
+            public ACDown AC_down { get; set; } 
+        }
+    
+        public class Desired    {
+            public int AC_temp { get; set; } 
+            public int AC_active { get; set; } 
+            public int AC_up { get; set; } 
+            public int AC_down { get; set; } 
+            [JsonProperty("$metadata")]
+            public Metadata Metadata { get; set; } 
+            [JsonProperty("$version")]
+            public int Version { get; set; } 
+        }
+    
+        public class Metadata2    {
+            [JsonProperty("$lastUpdated")]
+            public DateTime LastUpdated { get; set; } 
+        }
+    
+        public class Reported    {
+            [JsonProperty("$metadata")]
+            public Metadata2 Metadata { get; set; } 
+            [JsonProperty("$version")]
+            public int Version { get; set; } 
+        }
+    
+        public class Properties    {
+            public Desired desired { get; set; } 
+            public Reported reported { get; set; } 
+        }
+    
+        public class Capabilities    {
+            public bool iotEdge { get; set; } 
+        }
+    
+        public class Root    {
+            public string deviceId { get; set; } 
+            public string etag { get; set; } 
+            public string deviceEtag { get; set; } 
+            public string status { get; set; } 
+            public DateTime statusUpdateTime { get; set; } 
+            public string connectionState { get; set; } 
+            public DateTime lastActivityTime { get; set; } 
+            public int cloudToDeviceMessageCount { get; set; } 
+            public string authenticationType { get; set; } 
+            public X509Thumbprint x509Thumbprint { get; set; } 
+            public string modelId { get; set; } 
+            public int version { get; set; } 
+            public Properties properties { get; set; } 
+            public Capabilities capabilities { get; set; } 
+        }
+    }
+}
